@@ -1,13 +1,15 @@
 //types
 use std::error::Error;
-use std::path::Path;
 use std::fs::File;
+use std::io::BufReader;
+use std::io::BufRead;
 use std::env;
 //traits
 use std::io::Read;
 
 #[allow(non_snake_case)]
 #[allow(non_camel_case_types)]
+#[allow(dead_code)]
 pub struct CPU {
     //Registers
 
@@ -46,8 +48,13 @@ pub struct CPU {
     //
     //this size is without any mirrors
     mem: Vec<u8>,
+
+    //Debug string
+    debug: String,
 }
 
+#[allow(non_camel_case_types)]
+#[allow(dead_code)]
 enum mem_map {
     internal_ram,
     ppu_registers,
@@ -73,6 +80,7 @@ enum mem_map {
 }*/
 
 #[allow(non_snake_case)]
+#[allow(dead_code)]
 impl CPU {
     pub fn new() -> CPU {
         let mut _mem = Vec::with_capacity(0xFFFF);
@@ -85,6 +93,7 @@ impl CPU {
         let mut _A = 0;
         let mut _X = 0;
         let mut _Y = 0;
+        let mut _debug :String = "".to_owned();
 
         CPU {
             PC: _PC,
@@ -94,11 +103,12 @@ impl CPU {
             X: _X,
             Y: _Y,
             mem: _mem,
+            debug: _debug,
         }
     }
 
     // run a program
-    pub fn run(&mut self, program: &str) {
+    pub fn test_load(&mut self, program: &str) {
         let path = env::current_dir().unwrap().join(program);
         let f = match File::open(&path) {
             Err(why) => panic!("Couldn't open {:?}: {}", path, Error::description(&why)),
@@ -123,49 +133,86 @@ impl CPU {
         self.set_mem(mem_map::cartridge_space, &mut program_mem);
         self.PC = 0xC000;
         self.P = 0x24;
+    }
 
-        loop {
-            let instr: u8 = self.mem[self.PC as usize];
+    pub fn test_run(&mut self, log: &str) {
+        //for some reason cargo indents the first line of output
+        println!("");
 
-            print!("{:04X}  {:02X} ", self.PC, instr);
-            self.PC = self.PC + 1;
+        let path = env::current_dir().unwrap().join(log);
+        let f = match File::open(&log) {
+            Err(why) => panic!("Couldn't open {:?}: {}", path, Error::description(&why)),
+            Ok(file) => file,
+        };
 
-            match instr {
-                0x4C => {
-                    let operand = self.read_absolute();
-                    print!("{:02X} {:02X}  JMP ${:04X}                       ", operand as u8, operand >> 8 as u8, operand);
-                    self.JMP(&operand);
-                },
-                0x86 => {
-                    let operand = self.read_zeropage();
-                    print!("{:02X}     STX ${:02X} = {:02X}                    ", operand, operand, self.X);
-                    self.STX(&operand);
-                },
-                0xA2 => {
-                    let operand = self.read_immediate();
-                    print!("{:02X}     LDX #${:02X}                        ", operand, operand);
-                    self.LDX(&operand);
-                },
-                _ => {
-                    println!("NOT IMPLEMENTED YET");
-                    break;
-                },
-            }
+        let file = BufReader::new(&f);
 
-            self.print_registers();
+        for line in file.lines() {
+            let mut curr_line = match line {
+                Err(why) => panic!("Couldn't read line from {:?}: {}", path, Error::description(&why)),
+                Ok(line) => line,
+            };
+
+            let instr = self.fetch_instr();
+            self.execute_instr(&instr);
+
+            curr_line.truncate(73);
+            //println!("Log   line:{}", curr_line);
+            //println!("Debug line:{}", self.debug);
+            assert_eq!(self.debug, curr_line);
         }
     }
 
-    fn print_registers(&self) {
-        println!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}", self.A, self.X, self.Y, self.P, self.S);
+    pub fn run(&mut self) {
+        loop {
+            let instr = self.fetch_instr();
+            self.execute_instr(&instr);
+        }
+    }
+
+    fn fetch_instr(&mut self) -> u8 {
+        let instr = self.mem[self.PC as usize];
+        self.debug = format!("{:04X}  {:02X} ", self.PC, instr);
+        self.PC = self.PC + 1;
+        instr
+    }
+
+    fn execute_instr(&mut self, instr: &u8) {
+        match *instr {
+            0x4C => {
+                let operand = self.read_absolute();
+                self.debug.push_str(&format!("{:02X} {:02X}  JMP ${:04X}                       ", operand as u8, operand >> 8 as u8, operand));
+                self.print_registers();
+                self.JMP(&operand);
+            },
+            0x86 => {
+                let operand = self.read_zeropage();
+                self.debug.push_str(&format!("{:02X}     STX ${:02X} = {:02X}                    ", operand, operand, self.X));
+                self.print_registers();
+                self.STX(&operand);
+            },
+            0xA2 => {
+                let operand = self.read_immediate();
+                self.debug.push_str(&format!("{:02X}     LDX #${:02X}                        ", operand, operand));
+                self.print_registers();
+                self.LDX(&operand);
+            },
+            _ => {
+                println!("NOT IMPLEMENTED YET");
+            },
+        }
+    }
+
+    fn print_registers(&mut self) {
+        self.debug.push_str(&format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}", self.A, self.X, self.Y, self.P, self.S));
     }
 
     fn set_zero_flag(&mut self) {
-        self.PC |= 0x02;
+        self.P |= 0x02;
     }
 
     fn set_neg_flag(&mut self) {
-        self.PC |= 0x080;
+        self.P |= 0x080;
     }
 
     fn read_absolute(&mut self) -> u16 {

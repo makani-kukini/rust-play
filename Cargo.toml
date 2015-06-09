@@ -5,3 +5,7 @@ version = "0.1.0"
 [[bin]]
 name = "nes"
 path = "src/nes.rs"
+
+[lib]
+name = "cpu"
+src = "src/cpu.rs"
