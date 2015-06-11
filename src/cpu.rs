@@ -159,6 +159,9 @@ impl CPU {
             curr_line.truncate(73);
             //println!("Log   line:{}", curr_line);
             //println!("Debug line:{}", self.debug);
+            if curr_line != self.debug {
+                println!("{}", curr_line);
+            }
             assert_eq!(self.debug, curr_line);
         }
     }
@@ -179,6 +182,22 @@ impl CPU {
 
     fn execute_instr(&mut self, instr: &u8) {
         match *instr {
+            0x18 => {
+                self.debug.push_str(&format!("       CLC                             "));
+                self.print_registers();
+                self.CLC();
+            },
+            0x20 => {
+                let operand = self.read_absolute();
+                self.debug.push_str(&format!("{:02X} {:02X}  JSR ${:04X}                       ", operand as u8, operand >> 8 as u8, operand));
+                self.print_registers();
+                self.JSR(&operand);
+            },
+            0x38 => {
+                self.debug.push_str(&format!("       SEC                             "));
+                self.print_registers();
+                self.SEC();
+            },
             0x4C => {
                 let operand = self.read_absolute();
                 self.debug.push_str(&format!("{:02X} {:02X}  JMP ${:04X}                       ", operand as u8, operand >> 8 as u8, operand));
@@ -197,6 +216,20 @@ impl CPU {
                 self.print_registers();
                 self.LDX(&operand);
             },
+            0xB0 => {
+                let operand = self.read_relative();
+                let branch_location = (self.PC as i32 + operand as i32) as u16;
+                //println!("PC: {:04X}, OFFSET: {}", self.PC, operand);
+                self.debug.push_str(&format!("{:02x}     BCS ${:04X}                       ", operand, branch_location));
+                self.print_registers();
+                //println!("{}", self.debug);
+                self.BCS(&operand);
+            },
+            0xEA => {
+                self.debug.push_str(&format!("       NOP                             "));
+                self.print_registers();
+                self.NOP();
+            },
             _ => {
                 println!("NOT IMPLEMENTED YET");
             },
@@ -205,6 +238,18 @@ impl CPU {
 
     fn print_registers(&mut self) {
         self.debug.push_str(&format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}", self.A, self.X, self.Y, self.P, self.S));
+    }
+
+    fn is_carry_set(&self) -> bool {
+        self.P & 0x01 > 0
+    }
+
+    fn set_carry_flag(&mut self) {
+        self.P |= 0x01;
+    }
+
+    fn clear_carry_flag(&mut self) {
+        self.P &= !(1 << 0);
     }
 
     fn set_zero_flag(&mut self) {
@@ -221,6 +266,12 @@ impl CPU {
         mem
     }
 
+    fn read_relative(&mut self) -> i8 {
+        let mem = self.mem[self.PC as usize] as i8;
+        self.PC = self.PC + 1;
+        mem
+    }
+
     fn read_immediate(&mut self) -> u8 {
         let mem = self.mem[self.PC as usize];
         self.PC = self.PC + 1;
@@ -231,6 +282,24 @@ impl CPU {
         let mem = self.mem[self.PC as usize];
         self.PC = self.PC + 1;
         mem
+    }
+
+    fn push_to_stack(&mut self, value: &u8) {
+        if self.S == 0x00 {
+            panic!("Stack overflow!");
+        }
+
+        self.mem[(0x0100 + self.S as u16) as usize] = *value;
+        self.S = self.S - 1;
+    }
+
+    fn pop_from_stack(&mut self) -> u8 {
+        if self.S >= 0xFF {
+            panic!("Stack underflow!");
+        }
+
+        self.S = self.S + 1;
+        self.mem[(0x0100 + self.S as u16) as usize]
     }
 
     fn set_mem(&mut self, start_addr: mem_map, program_mem: &mut Vec<u8>) {
@@ -313,8 +382,10 @@ impl CPU {
     }
 
     // Branch on Carry Set
-    fn BCS(&self) {
-
+    fn BCS(&mut self, operand: &i8) {
+        if self.is_carry_set() {
+            self.PC = (self.PC as i32 + *operand as i32) as u16;
+        }
     }
 
     // Branch on Not Equal
@@ -360,13 +431,13 @@ impl CPU {
     }
 
     // CLear Carry
-    fn CLC(&self) {
-
+    fn CLC(&mut self) {
+        self.clear_carry_flag();
     }
 
     // SEt Carry
-    fn SEC(&self) {
-
+    fn SEC(&mut self) {
+        self.set_carry_flag();
     }
 
     // CLear Interrupt
@@ -405,8 +476,12 @@ impl CPU {
     }
 
     // Jump to SubRoutine
-    fn JSR(&self) {
-
+    fn JSR(&mut self, operand: &u16) {
+        let PCH: u8 = (self.PC >> 8) as u8;
+        let PCL: u8 = self.PC as u8;
+        self.push_to_stack(&PCH);
+        self.push_to_stack(&PCL);
+        self.PC = *operand;
     }
 
     // LoaD Accumulator
