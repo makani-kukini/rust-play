@@ -193,6 +193,12 @@ impl CPU {
                 self.print_registers();
                 self.JSR(&operand);
             },
+            0x24 => {
+                let operand = self.read_zeropage();
+                self.debug.push_str(&format!("{:02X}     BIT ${:02X} = {:02X}                    ", operand, operand, self.mem[operand as usize]));
+                self.print_registers();
+                self.BIT(&operand);
+            },
             0x38 => {
                 self.debug.push_str(&format!("       SEC                             "));
                 self.print_registers();
@@ -204,11 +210,38 @@ impl CPU {
                 self.print_registers();
                 self.JMP(&operand);
             },
+            0x50 => {
+                let operand = self.read_relative();
+                let branch_location = (self.PC as i32 + operand as i32) as u16;
+                self.debug.push_str(&format!("{:02x}     BVC ${:04X}                       ", operand, branch_location));
+                self.print_registers();
+                self.BVC(&operand);
+            },
+            0x70 => {
+                let operand = self.read_relative();
+                let branch_location = (self.PC as i32 + operand as i32) as u16;
+                self.debug.push_str(&format!("{:02x}     BVS ${:04X}                       ", operand, branch_location));
+                self.print_registers();
+                self.BVS(&operand);
+            },
+            0x85 => {
+                let operand = self.read_zeropage();
+                self.debug.push_str(&format!("{:02X}     STA ${:02X} = {:02X}                    ", operand, operand, self.mem[operand as usize]));
+                self.print_registers();
+                self.STA(&operand);
+            },
             0x86 => {
                 let operand = self.read_zeropage();
-                self.debug.push_str(&format!("{:02X}     STX ${:02X} = {:02X}                    ", operand, operand, self.X));
+                self.debug.push_str(&format!("{:02X}     STX ${:02X} = {:02X}                    ", operand, operand, self.mem[operand as usize]));
                 self.print_registers();
                 self.STX(&operand);
+            },
+            0x90 => {
+                let operand = self.read_relative();
+                let branch_location = (self.PC as i32 + operand as i32) as u16;
+                self.debug.push_str(&format!("{:02x}     BCC ${:04X}                       ", operand, branch_location));
+                self.print_registers();
+                self.BCC(&operand);
             },
             0xA2 => {
                 let operand = self.read_immediate();
@@ -216,19 +249,37 @@ impl CPU {
                 self.print_registers();
                 self.LDX(&operand);
             },
+            0xA9 => {
+                let operand = self.read_immediate();
+                self.debug.push_str(&format!("{:02X}     LDA #${:02X}                        ", operand, operand));
+                self.print_registers();
+                self.LDA(&operand);
+            },
             0xB0 => {
                 let operand = self.read_relative();
                 let branch_location = (self.PC as i32 + operand as i32) as u16;
-                //println!("PC: {:04X}, OFFSET: {}", self.PC, operand);
                 self.debug.push_str(&format!("{:02x}     BCS ${:04X}                       ", operand, branch_location));
                 self.print_registers();
-                //println!("{}", self.debug);
                 self.BCS(&operand);
+            },
+            0xD0 => {
+                let operand = self.read_relative();
+                let branch_location = (self.PC as i32 + operand as i32) as u16;
+                self.debug.push_str(&format!("{:02x}     BNE ${:04X}                       ", operand, branch_location));
+                self.print_registers();
+                self.BNE(&operand);
             },
             0xEA => {
                 self.debug.push_str(&format!("       NOP                             "));
                 self.print_registers();
                 self.NOP();
+            },
+            0xF0 => {
+                let operand = self.read_relative();
+                let branch_location = (self.PC as i32 + operand as i32) as u16;
+                self.debug.push_str(&format!("{:02x}     BEQ ${:04X}                       ", operand, branch_location));
+                self.print_registers();
+                self.BEQ(&operand);
             },
             _ => {
                 println!("NOT IMPLEMENTED YET");
@@ -252,12 +303,40 @@ impl CPU {
         self.P &= !(1 << 0);
     }
 
+    fn is_zero_set(&self) -> bool {
+        self.P & 0x02 > 0
+    }
+
     fn set_zero_flag(&mut self) {
         self.P |= 0x02;
     }
 
+    fn clear_zero_flag(&mut self) {
+        self.P &= !(1 << 1);
+    }
+
+    fn is_overflow_set(&self) -> bool {
+        self.P & 0x40 > 0
+    }
+
+    fn set_overflow_flag(&mut self) {
+        self.P |= 0x40;
+    }
+
+    fn clear_overflow_flag(&mut self) {
+        self.P &= !(1 << 6);
+    }
+
+    fn is_neg_set(&self) -> bool {
+        self.P & 0x80 > 0
+    }
+
     fn set_neg_flag(&mut self) {
-        self.P |= 0x080;
+        self.P |= 0x80;
+    }
+
+    fn clear_neg_flag(&mut self) {
+        self.P &= !(1 << 7);
     }
 
     fn read_absolute(&mut self) -> u16 {
@@ -352,8 +431,22 @@ impl CPU {
     }
 
     // test BITs
-    fn BIT(&self) {
-
+    fn BIT(&mut self, operand: &u8) {
+        if self.A & self.mem[*operand as usize] == 0 {
+            self.set_zero_flag();
+        } else {
+            self.clear_zero_flag();
+        }
+        if self.mem[*operand as usize] & 0x60 > 0 {
+            self.set_overflow_flag();
+        } else {
+            self.clear_overflow_flag();
+        }
+        if self.mem[*operand as usize] & 0x80 > 0 {
+            self.set_neg_flag();
+        } else {
+            self.clear_neg_flag();
+        }
     }
 
     // Branch on PLus
@@ -367,18 +460,24 @@ impl CPU {
     }
 
     // Branch on oVerflow Clear
-    fn BVC(&self) {
-
+    fn BVC(&mut self, operand: &i8) {
+        if !self.is_overflow_set() {
+            self.PC = (self.PC as i32 + *operand as i32) as u16;
+        }
     }
 
     // Branch on oVerflow Set
-    fn BVS(&self) {
-
+    fn BVS(&mut self, operand: &i8) {
+        if self.is_overflow_set() {
+            self.PC = (self.PC as i32 + *operand as i32) as u16;
+        }
     }
 
     // Branch on Carry Clear
-    fn BCC(&self) {
-
+    fn BCC(&mut self, operand: &i8) {
+        if !self.is_carry_set() {
+            self.PC = (self.PC as i32 + *operand as i32) as u16;
+        }
     }
 
     // Branch on Carry Set
@@ -389,13 +488,17 @@ impl CPU {
     }
 
     // Branch on Not Equal
-    fn BNE(&self) {
-
+    fn BNE(&mut self, operand: &i8) {
+        if !self.is_zero_set() {
+            self.PC = (self.PC as i32 + *operand as i32) as u16;
+        }
     }
 
     // Branch on EQual
-    fn BEQ(&self) {
-
+    fn BEQ(&mut self, operand: &i8) {
+        if self.is_zero_set() {
+            self.PC = (self.PC as i32 + *operand as i32) as u16;
+        }
     }
 
     //BReaK
@@ -485,8 +588,18 @@ impl CPU {
     }
 
     // LoaD Accumulator
-    fn LDA(&self) {
-
+    fn LDA(&mut self, operand: &u8) {
+        self.A = *operand;
+        if self.A == 0 {
+            self.set_zero_flag();
+        } else {
+            self.clear_zero_flag();
+        }
+        if self.A & 0x80 > 0 {
+            self.set_neg_flag();
+        } else {
+            self.clear_neg_flag();
+        }
     }
 
     // LoaD X register
@@ -494,9 +607,13 @@ impl CPU {
         self.X = *operand;
         if self.X == 0 {
             self.set_zero_flag();
+        } else {
+            self.clear_zero_flag();
         }
         if self.X & 0x80 > 0 {
             self.set_neg_flag();
+        } else {
+            self.clear_neg_flag();
         }
     }
 
@@ -588,9 +705,9 @@ impl CPU {
     }
 
     // STore Accumulator
-    fn STA(&self)
+    fn STA(&mut self, operand: &u8)
     {
-
+        self.mem[*operand as usize] = self.A;
     }
 
     // Transfer X to Stack ptr
